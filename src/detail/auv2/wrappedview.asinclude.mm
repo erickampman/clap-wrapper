@@ -111,8 +111,6 @@ void CLAP_WRAPPER_TIMER_CALLBACK(CFRunLoopTimerRef timer, void *info)
   }
   self = [super initWithFrame:NSMakeRect(0, 0, size.width, size.height)];
 
-  // gui->show(ui._plugin->_plugin);
-
   clap_window_t m;
   m.api = CLAP_WINDOW_API_COCOA;
   m.ptr = self;
@@ -133,6 +131,11 @@ void CLAP_WRAPPER_TIMER_CALLBACK(CFRunLoopTimerRef timer, void *info)
     [self setAutoresizingMask:mask];
     gui->set_size(ui._plugin->_plugin, size.width, size.height);
   }
+
+  // CLAP's gui lifecycle is create -> set_parent -> set_size -> show; plugins may
+  // start their rendering (e.g. register a host timer) in show(), so without it
+  // the view is parented but never drawn
+  gui->show(ui._plugin->_plugin);
 
   idleTimer = nil;
   CFTimeInterval TIMER_INTERVAL = .05;  // In SurgeGUISynthesizer.h it uses 50 ms
@@ -193,7 +196,6 @@ void CLAP_WRAPPER_TIMER_CALLBACK(CFRunLoopTimerRef timer, void *info)
     // AUv2 gui always uses logical size
     gui->set_size(ui._plugin->_plugin, newSize.size.width, newSize.size.height);
   }
-  // gui->show(ui._plugin->_plugin);
 }
 
 @end
