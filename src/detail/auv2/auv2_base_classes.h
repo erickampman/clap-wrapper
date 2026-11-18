@@ -174,6 +174,14 @@ class MIDIOutput
   bool addNoteOff(uint8_t channel, uint8_t note, uint8_t velocity);
   bool addMIDI3Byte(const uint8_t *threebytes);
   bool addSysEx(const uint8_t *data, uint32_t size);
+  // A MIDI 2.0 channel-voice message (MT 0x4, two words). On a port whose plugin prefers the
+  // MIDI2 dialect the UMP list is MIDI 2.0, so the message passes unchanged (Pitch 7.9, 16-bit
+  // velocity and the rest survive); the legacy packet list gets its MIDI 1.0 down-conversion.
+  bool addMIDI2(const uint32_t *words);
+  bool isMIDI2() const
+  {
+    return _midi2;
+  }
 
   void clear();
   const clap_note_port_info _info;
@@ -185,7 +193,8 @@ class MIDIOutput
 
  private:
 #if AUSDK_MIDI2_AVAILABLE
-  // wrap a MIDI 1.0 channel-voice message into one MT 0x2 UMP word
+  // wrap a MIDI 1.0 channel-voice message into one MT 0x2 UMP word, or, on a MIDI 2.0 list,
+  // up-convert it to MT 0x4
   void appendUMP1(uint8_t status, uint8_t data1, uint8_t data2)
   {
     // _umpCurrent is null when running on macOS < 11 (the list is never
@@ -194,6 +203,15 @@ class MIDIOutput
     if (!_umpCurrent) return;
     if (__builtin_available(macOS 11.0, *))
     {
+      if (_midi2)
+      {
+        uint32_t words[2];
+        if (ClapWrapper::detail::shared::midi1ToMidi2ChannelVoice(status, data1, data2, words))
+        {
+          _umpCurrent = MIDIEventListAdd(_umpList, sizeof(_umpBuffer), _umpCurrent, 0, 2, words);
+          return;
+        }
+      }
       uint32_t word = ClapWrapper::detail::shared::midi1ToUmpWord(status, data1, data2);
       _umpCurrent = MIDIEventListAdd(_umpList, sizeof(_umpBuffer), _umpCurrent, 0, 1, &word);
     }
@@ -206,6 +224,7 @@ class MIDIOutput
   MIDIPacketList *_midiPacketList = nullptr;
   uint8_t _buffer[2048];
   uint32_t _numEvents = 0;
+  bool _midi2 = false;  // the plugin's port prefers MIDI2: the UMP list is MIDI 2.0
 #if AUSDK_MIDI2_AVAILABLE
   MIDIEventPacket *_umpCurrent = nullptr;
   MIDIEventList *_umpList = nullptr;
@@ -219,12 +238,13 @@ MIDIOutput::MIDIOutput(int auport, const clap_note_port_info &info) : _info(info
   _current = MIDIPacketListInit(_midiPacketList);
   _numEvents = 0;
 #if AUSDK_MIDI2_AVAILABLE
+  _midi2 = (info.preferred_dialect == CLAP_NOTE_DIALECT_MIDI2);
   // on macOS < 11 the CoreMIDI EventList API is unavailable; _umpList and
   // _umpCurrent stay null and every UMP append becomes a no-op
   if (__builtin_available(macOS 11.0, *))
   {
     _umpList = (MIDIEventList *)_umpBuffer;
-    _umpCurrent = MIDIEventListInit(_umpList, kMIDIProtocol_1_0);
+    _umpCurrent = MIDIEventListInit(_umpList, _midi2 ? kMIDIProtocol_2_0 : kMIDIProtocol_1_0);
   }
 #endif
 }
@@ -236,7 +256,7 @@ void MIDIOutput::clear()
 #if AUSDK_MIDI2_AVAILABLE
   if (__builtin_available(macOS 11.0, *))
   {
-    if (_umpList) _umpCurrent = MIDIEventListInit(_umpList, kMIDIProtocol_1_0);
+    if (_umpList) _umpCurrent = MIDIEventListInit(_umpList, _midi2 ? kMIDIProtocol_2_0 : kMIDIProtocol_1_0);
   }
 #endif
 }
@@ -295,6 +315,30 @@ bool MIDIOutput::addMIDI3Byte(const uint8_t *threebytes)
       return false;
   }
 
+  ++_numEvents;
+  return (_current != nullptr);
+}
+
+bool MIDIOutput::addMIDI2(const uint32_t *words)
+{
+  if (!_current) return false;
+  uint8_t bytes[3];
+  const int n = ClapWrapper::detail::shared::midi2ChannelVoiceToMidi1(words, bytes);
+  if (n > 0) _current = MIDIPacketListAdd(_midiPacketList, sizeof(_buffer), _current, 0, n, bytes);
+#if AUSDK_MIDI2_AVAILABLE
+  if (_midi2 && _umpCurrent)
+  {
+    if (__builtin_available(macOS 11.0, *))
+    {
+      _umpCurrent = MIDIEventListAdd(_umpList, sizeof(_umpBuffer), _umpCurrent, 0, 2, words);
+    }
+  }
+  else if (n > 0)
+  {
+    appendUMP1(bytes[0], bytes[1], n > 2 ? bytes[2] : 0);
+  }
+#endif
+  if (n <= 0 && !_midi2) return false;
   ++_numEvents;
   return (_current != nullptr);
 }

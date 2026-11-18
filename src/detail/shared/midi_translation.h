@@ -82,6 +82,68 @@ inline uint32_t midi1ToUmpWord(uint8_t status, uint8_t data1, uint8_t data2)
          (static_cast<uint32_t>(data1) << 8) | static_cast<uint32_t>(data2);
 }
 
+// The MIDI 2.0 specification's min-center-max up-scaling of an n-bit value to m bits.
+inline uint32_t scaleUpMidi(uint32_t src, int srcBits, int dstBits)
+{
+  const int scaleBits = dstBits - srcBits;
+  uint32_t bitShifted = src << scaleBits;
+  const uint32_t srcCenter = 1u << (srcBits - 1);
+  if (src <= srcCenter) return bitShifted;
+  const int repeatBits = srcBits - 1;
+  const uint32_t repeatMask = (1u << repeatBits) - 1;
+  uint32_t repeatValue = src & repeatMask;
+  if (scaleBits > repeatBits)
+    repeatValue <<= scaleBits - repeatBits;
+  else
+    repeatValue >>= repeatBits - scaleBits;
+  while (repeatValue != 0)
+  {
+    bitShifted |= repeatValue;
+    repeatValue >>= repeatBits;
+  }
+  return bitShifted;
+}
+
+// Up-convert a MIDI 1.0 channel-voice message to one MIDI 2.0 channel-voice message (MT 0x4,
+// group 0, two words). A Note On of velocity 0 becomes a Note Off. Returns false for what has no
+// single-message equivalent (none of the channel-voice types, here).
+inline bool midi1ToMidi2ChannelVoice(uint8_t status, uint8_t data1, uint8_t data2, uint32_t out[2])
+{
+  uint8_t type = status & 0xF0u;
+  const uint32_t channel = status & 0x0Fu;
+  data1 &= 0x7F;
+  data2 &= 0x7F;
+  if (type == 0x90 && data2 == 0) type = 0x80;
+  uint32_t index = 0, value = 0;
+  switch (type)
+  {
+    case 0x80:
+    case 0x90:
+      index = data1;
+      value = scaleUpMidi(data2, 7, 16) << 16;
+      break;
+    case 0xA0:
+    case 0xB0:
+      index = data1;
+      value = scaleUpMidi(data2, 7, 32);
+      break;
+    case 0xC0:
+      value = static_cast<uint32_t>(data1) << 24;
+      break;
+    case 0xD0:
+      value = scaleUpMidi(data1, 7, 32);
+      break;
+    case 0xE0:
+      value = scaleUpMidi((static_cast<uint32_t>(data2) << 7) | data1, 14, 32);
+      break;
+    default:
+      return false;
+  }
+  out[0] = (0x4u << 28) | (static_cast<uint32_t>(type) << 16) | (channel << 16) | (index << 8);
+  out[1] = value;
+  return true;
+}
+
 // Down-convert a single MIDI 2.0 channel-voice UMP message (MT 0x4) to a MIDI 1.0
 // 3-byte message. Returns the number of MIDI1 bytes written (0 if not convertible).
 // Wide MIDI2 values are reduced by dropping the low bits (16->7, 32->7, 32->14).

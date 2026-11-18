@@ -1785,22 +1785,25 @@ void WrapAsAUV2::send(const Clap::AUv2::clap_multi_event_t &event)
     break;
     case CLAP_EVENT_MIDI2:
     {
-      // A plugin emitting raw UMP is rare. Down-convert MIDI 2.0 channel-voice
-      // to MIDI 1.0 and route through the normal output; this works for both the
-      // legacy callback and the UMP EventList path (which the framework then
-      // up-converts to the host's negotiated protocol).
-      uint8_t bytes[3];
-      if (ClapWrapper::detail::shared::midi2ChannelVoiceToMidi1(event.midi2.data, bytes) > 0)
+      // A port whose plugin prefers the MIDI2 dialect keeps MIDI 2.0 channel-voice
+      // messages whole on the UMP EventList path (Pitch 7.9 and all), with a MIDI 1.0
+      // down-conversion for the legacy callback. Elsewhere, down-convert to MIDI 1.0
+      // and route through the normal output, as before.
+      auto portid = event.midi2.port_index;
+      for (auto &i : _midi_outports)
       {
-        auto portid = event.midi2.port_index;
-        for (auto &i : _midi_outports)
+        if (i->_info.id != portid) continue;
+        if (i->isMIDI2() && ((event.midi2.data[0] >> 28) & 0xFu) == 0x4u)
         {
-          if (i->_info.id == portid)
-          {
-            i->addMIDI3Byte(bytes);
-            break;
-          }
+          i->addMIDI2(event.midi2.data);
         }
+        else
+        {
+          uint8_t bytes[3];
+          if (ClapWrapper::detail::shared::midi2ChannelVoiceToMidi1(event.midi2.data, bytes) > 0)
+            i->addMIDI3Byte(bytes);
+        }
+        break;
       }
     }
     break;
