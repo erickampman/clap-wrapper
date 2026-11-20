@@ -211,12 +211,12 @@ void ProcessAdapter::process(ProcessData &data)
   {
     // TODO: transportchanged flag?
     _transport.flags |= data._isPlaying ? CLAP_TRANSPORT_IS_PLAYING : 0;
+    // _isRecording comes from HostCallback_GetTransportState2; false with the older callback.
     _transport.flags |= data._isRecording ? CLAP_TRANSPORT_IS_RECORDING : 0;
-    // CLAP_TRANSPORT_IS_RECORDING can not be retrieved from this data block
     _transport.flags |= data._isLooping ? CLAP_TRANSPORT_IS_LOOP_ACTIVE : 0;
-    // CLAP_TRANSPORT_IS_RECORDING can not be retrieved from the AudioUnit API
-    _transport.loop_end_beats = data._cycleStart;
-    _transport.loop_end_beats = data._cycleEnd;
+    // The cycle is in beats (a double); CLAP's are fixed point.
+    _transport.loop_start_beats = doubleToBeatTime(data._cycleStart);
+    _transport.loop_end_beats = doubleToBeatTime(data._cycleEnd);
 
     _transport.song_pos_seconds = doubleToSecTime(data._currentSongPosInSeconds);
     _transport.flags |= CLAP_TRANSPORT_HAS_SECONDS_TIMELINE;
@@ -228,7 +228,7 @@ void ProcessAdapter::process(ProcessData &data)
       _transport.tempo = data._tempo;
       _transport.flags |= CLAP_TRANSPORT_HAS_TEMPO;
     }
-    if (data._beat)
+    // Beat 0 is a position too (the song's start), not "no beats".
     {
       _transport.song_pos_beats = doubleToBeatTime(data._beat);
       _transport.flags |= CLAP_TRANSPORT_HAS_BEATS_TIMELINE;

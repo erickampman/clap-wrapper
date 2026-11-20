@@ -803,6 +803,7 @@ class WrapAsAUV2 : public ausdk::AUBase,
 
   std::unique_ptr<Clap::AUv2::ProcessAdapter> _processAdapter;
   std::atomic<bool> _initialized = false;
+  bool _offlineRender = false;  // kAudioUnitProperty_OfflineRender, as last set by the host
 
   // some info about the wrapped clap
   // audio-port layout captured at PostConstructor. Scanning the CLAP

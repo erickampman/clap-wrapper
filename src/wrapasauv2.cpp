@@ -744,6 +744,14 @@ OSStatus WrapAsAUV2::GetPropertyInfo(AudioUnitPropertyID inID, AudioUnitScope in
         return noErr;
         break;
 
+      case kAudioUnitProperty_OfflineRender:
+        // AudioUnitSDK's AUBase leaves this to the unit: pass it on to the CLAP render extension
+        // (as the VST3 wrapper does with its process mode), so a bounce reaches the plugin.
+        outWritable = true;
+        outDataSize = sizeof(UInt32);
+        return noErr;
+        break;
+
       case kAudioUnitProperty_CocoaUI:
         if (!_plugin->_ext._gui) return kAudioUnitErr_InvalidProperty;
         if (!_plugin->_ext._gui->is_api_supported(_plugin->_plugin, CLAP_WINDOW_API_COCOA, false))
@@ -862,6 +870,11 @@ OSStatus WrapAsAUV2::GetProperty(AudioUnitPropertyID inID, AudioUnitScope inScop
         *static_cast<ui_connection *>(outData) = _uiconn;
         return noErr;
 
+      case kAudioUnitProperty_OfflineRender:
+        *static_cast<UInt32 *>(outData) = _offlineRender ? 1 : 0;
+        return noErr;
+        break;
+
       case kAudioUnitProperty_CocoaUI:
         LOGINFO("[clap-wrapper] Property: kAudioUnitProperty_CocoaUI {}",
                 (_plugin) ? "plugin" : "no plugin");
@@ -961,6 +974,19 @@ OSStatus WrapAsAUV2::SetProperty(AudioUnitPropertyID inID, AudioUnitScope inScop
       //      mProcessesInPlace = *static_cast<const UInt32*>(inData) != 0;
       //      return noErr;
       break;
+      case kAudioUnitProperty_OfflineRender:
+      {
+        if (inDataSize < sizeof(UInt32)) return kAudioUnitErr_InvalidPropertyValue;
+        const bool offline = *static_cast<const UInt32 *>(inData) != 0;
+        if (_plugin && _plugin->_ext._render)
+        {
+          if (offline && _plugin->_ext._render->has_hard_realtime_requirement(_plugin->_plugin))
+            return kAudioUnitErr_InvalidPropertyValue;
+          _plugin->_ext._render->set(_plugin->_plugin, offline ? CLAP_RENDER_OFFLINE : CLAP_RENDER_REALTIME);
+        }
+        _offlineRender = offline;
+        return noErr;
+      }
       case kAudioUnitProperty_MIDIOutputCallbackInfo:
         // this is actually read only
         return noErr;
